@@ -1,0 +1,418 @@
+--- FILE: settings.gradle
+rootProject.name = 'mgi-sales'
+include ':app'
+
+--- FILE: build.gradle (project)
+buildscript {
+    ext {
+        compose_version = '1.5.0'
+        kotlin_version = '1.9.10'
+        hilt_version = '2.46.1'
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:8.1.1"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath "com.google.dagger:hilt-android-gradle-plugin:$hilt_version"
+    }
+}
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+--- FILE: app/build.gradle
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'kotlin-kapt'
+    id 'dagger.hilt.android.plugin'
+}
+android {
+    namespace 'com.example.mgi'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.example.mgi"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "0.1"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    kotlinOptions { jvmTarget = '17' }
+    buildFeatures { compose true }
+    composeOptions { kotlinCompilerExtensionVersion = '1.5.2' }
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.10"
+    implementation 'androidx.core:core-ktx:1.11.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
+    implementation 'androidx.activity:activity-compose:1.8.0'
+    implementation "androidx.compose.ui:ui:${compose_version}"
+    implementation "androidx.compose.material:material:1.5.0"
+    implementation "androidx.compose.ui:ui-tooling-preview:${compose_version}"
+
+    // Hilt
+    implementation "com.google.dagger:hilt-android:$hilt_version"
+    kapt "com.google.dagger:hilt-compiler:$hilt_version"
+
+    // Room
+    implementation 'androidx.room:room-runtime:2.6.1'
+    kapt 'androidx.room:room-compiler:2.6.1'
+    implementation 'androidx.room:room-ktx:2.6.1'
+
+    // Retrofit + OkHttp
+    implementation 'com.squareup.retrofit2:retrofit:2.9.0'
+    implementation 'com.squareup.retrofit2:converter-moshi:2.9.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.11.0'
+
+    // WorkManager
+    implementation 'androidx.work:work-runtime-ktx:2.8.1'
+
+    // Coil for images
+    implementation 'io.coil-kt:coil-compose:2.4.0'
+
+    // Compose navigation
+    implementation 'androidx.navigation:navigation-compose:2.7.0'
+
+    // Debug tooling
+    debugImplementation "androidx.compose.ui:ui-tooling:${compose_version}"
+}
+
+--- FILE: app/src/main/AndroidManifest.xml
+<manifest package="com.example.mgi">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application
+        android:name=".MgiApplication"
+        android:allowBackup="true"
+        android:label="MGI Sales"
+        android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
+        <activity android:name="com.example.mgi.MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+
+--- FILE: app/src/main/java/com/example/mgi/MgiApplication.kt
+package com.example.mgi
+
+import android.app.Application
+import dagger.hilt.android.HiltAndroidApp
+
+@HiltAndroidApp
+class MgiApplication : Application() {}
+
+--- FILE: app/src/main/java/com/example/mgi/MainActivity.kt
+package com.example.mgi
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.material.MaterialTheme
+import androidx.compose.material.Surface
+import androidx.compose.material.Text
+import dagger.hilt.android.AndroidEntryPoint
+
+@AndroidEntryPoint
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            Surface(color = MaterialTheme.colors.background) {
+                Text("Welcome to MGI Sales — Starter")
+            }
+        }
+    }
+}
+
+--- FILE: app/src/main/java/com/example/mgi/data/local/Entities.kt
+package com.example.mgi.data.local
+
+import androidx.room.*
+import java.util.*
+
+@Entity(tableName = "customers")
+data class Customer(
+    @PrimaryKey(autoGenerate = false) val id: String,
+    val name: String,
+    val phone: String?,
+    val address: String?,
+    val updatedAt: Long,
+    val isSynced: Boolean = true
+)
+
+@Entity(tableName = "orders")
+data class OrderEntity(
+    @PrimaryKey val id: String,
+    val customerId: String,
+    val total: Double,
+    val status: String,
+    val createdAt: Long,
+    val isSynced: Boolean = false
+)
+
+--- FILE: app/src/main/java/com/example/mgi/data/local/Dao.kt
+package com.example.mgi.data.local
+
+import androidx.room.*
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface CustomerDao {
+    @Query("SELECT * FROM customers ORDER BY name")
+    fun getAll(): Flow<List<Customer>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(customers: List<Customer>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(customer: Customer)
+
+    @Query("SELECT * FROM customers WHERE isSynced = 0")
+    suspend fun getUnsyncedCustomers(): List<Customer>
+}
+
+@Dao
+interface OrderDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(order: OrderEntity)
+
+    @Query("SELECT * FROM orders WHERE isSynced = 0")
+    suspend fun getUnsyncedOrders(): List<OrderEntity>
+
+    @Update
+    suspend fun update(order: OrderEntity)
+}
+
+--- FILE: app/src/main/java/com/example/mgi/data/local/AppDatabase.kt
+package com.example.mgi.data.local
+
+import androidx.room.Database
+import androidx.room.RoomDatabase
+
+@Database(entities = [Customer::class, OrderEntity::class], version = 1)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun customerDao(): CustomerDao
+    abstract fun orderDao(): OrderDao
+}
+
+--- FILE: app/src/main/java/com/example/mgi/data/remote/ApiService.kt
+package com.example.mgi.data.remote
+
+import retrofit2.Response
+import retrofit2.http.Body
+import retrofit2.http.GET
+import retrofit2.http.POST
+
+data class ApiCustomer(val id: String, val name: String, val phone: String?, val address: String?)
+
+interface ApiService {
+    @GET("/api/customers")
+    suspend fun fetchCustomers(): Response<List<ApiCustomer>>
+
+    @POST("/api/orders")
+    suspend fun pushOrder(@Body payload: Map<String, Any>): Response<Map<String, Any>>
+}
+
+--- FILE: app/src/main/java/com/example/mgi/di/NetworkModule.kt
+package com.example.mgi.di
+
+import android.content.Context
+import androidx.room.Room
+import com.example.mgi.data.local.AppDatabase
+import com.example.mgi.data.remote.ApiService
+import com.squareup.moshi.Moshi
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import okhttp3.OkHttpClient
+import retrofit2.Retrofit
+import retrofit2.converter.moshi.MoshiConverterFactory
+import javax.inject.Singleton
+
+@Module
+@InstallIn(SingletonComponent::class)
+object NetworkModule {
+    @Provides
+    fun provideBaseUrl() = "https://example.com/"
+
+    @Provides
+    @Singleton
+    fun provideOkHttpClient(): OkHttpClient = OkHttpClient.Builder().build()
+
+    @Provides
+    @Singleton
+    fun provideRetrofit(client: OkHttpClient, baseUrl: String): Retrofit =
+        Retrofit.Builder()
+            .client(client)
+            .baseUrl(baseUrl)
+            .addConverterFactory(MoshiConverterFactory.create())
+            .build()
+
+    @Provides
+    @Singleton
+    fun provideApiService(retrofit: Retrofit): ApiService = retrofit.create(ApiService::class.java)
+
+    @Provides
+    @Singleton
+    fun provideDatabase(appContext: Context): AppDatabase =
+        Room.databaseBuilder(appContext, AppDatabase::class.java, "mgi-db").build()
+}
+
+--- FILE: app/src/main/java/com/example/mgi/repository/SalesRepository.kt
+package com.example.mgi.repository
+
+import com.example.mgi.data.local.AppDatabase
+import com.example.mgi.data.local.Customer
+import com.example.mgi.data.local.OrderEntity
+import com.example.mgi.data.remote.ApiService
+import kotlinx.coroutines.flow.Flow
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class SalesRepository @Inject constructor(
+    private val db: AppDatabase,
+    private val api: ApiService
+) {
+    fun customers(): Flow<List<Customer>> = db.customerDao().getAll()
+
+    suspend fun refreshCustomersFromServer() {
+        val resp = api.fetchCustomers()
+        if (resp.isSuccessful) {
+            val list = resp.body()?.map { apiC ->
+                Customer(apiC.id, apiC.name, apiC.phone, apiC.address, System.currentTimeMillis(), true)
+            } ?: emptyList()
+            db.customerDao().insertAll(list)
+        }
+    }
+
+    suspend fun createOrder(order: OrderEntity) {
+        db.orderDao().insert(order)
+    }
+
+    suspend fun getUnsyncedOrders(): List<OrderEntity> = db.orderDao().getUnsyncedOrders()
+}
+
+--- FILE: app/src/main/java/com/example/mgi/sync/SyncWorker.kt
+package com.example.mgi.sync
+
+import android.content.Context
+import androidx.hilt.work.HiltWorker
+import androidx.work.CoroutineWorker
+import androidx.work.WorkerParameters
+import com.example.mgi.data.local.OrderEntity
+import com.example.mgi.repository.SalesRepository
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedInject
+
+@HiltWorker
+class SyncWorker @AssistedInject constructor(
+    @Assisted appContext: Context,
+    @Assisted workerParams: WorkerParameters,
+    private val repo: SalesRepository
+) : CoroutineWorker(appContext, workerParams) {
+    override suspend fun doWork(): Result {
+        try {
+            val unsynced = repo.getUnsyncedOrders()
+            for (o in unsynced) {
+                // convert and push
+                val payload = mapOf(
+                    "id" to o.id,
+                    "customerId" to o.customerId,
+                    "total" to o.total,
+                    "status" to o.status
+                )
+                // In real app, call repo.api.pushOrder... Here invoke through repo via retrofit if exposed
+                // For brevity assume success
+                // On success mark as synced
+                // TODO: update db record isSynced=true
+            }
+            return Result.success()
+        } catch (e: Exception) {
+            return Result.retry()
+        }
+    }
+}
+
+--- FILE: app/src/main/java/com/example/mgi/ui/screens/LoginScreen.kt
+package com.example.mgi.ui.screens
+
+import androidx.compose.material.Button
+import androidx.compose.material.Text
+import androidx.compose.runtime.Composable
+
+@Composable
+fun LoginScreen(onLogin: (String) -> Unit) {
+    Button(onClick = { onLogin("dummy-token") }) {
+        Text("Login (demo)")
+    }
+}
+
+--- FILE: app/src/main/java/com/example/mgi/ui/screens/CustomerListScreen.kt
+package com.example.mgi.ui.screens
+
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.Text
+import androidx.compose.runtime.Composable
+
+@Composable
+fun CustomerListScreen(customers: List<com.example.mgi.data.local.Customer>) {
+    LazyColumn {
+        items(customers) { c ->
+            Text(text = "${c.name} — ${c.phone}")
+        }
+    }
+}
+
+--- FILE: app/src/main/java/com/example/mgi/viewmodel/MainViewModel.kt
+package com.example.mgi.viewmodel
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.mgi.data.local.Customer
+import com.example.mgi.repository.SalesRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+@HiltViewModel
+class MainViewModel @Inject constructor(
+    private val repo: SalesRepository
+) : ViewModel() {
+    val customers: StateFlow<List<Customer>> = repo.customers().stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    fun refresh() {
+        viewModelScope.launch { repo.refreshCustomersFromServer() }
+    }
+
+    fun createOrder(order: com.example.mgi.data.local.OrderEntity) {
+        viewModelScope.launch { repo.createOrder(order) }
+    }
+}
+
+--- FILE: proguard-rules.pro
+# keep Hilt
+-keep class dagger.hilt.** { *; }
